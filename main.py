@@ -1,7 +1,7 @@
 import os
 import logging
 from datetime import datetime
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify
 from pybit.unified_trading import HTTP
 
 app = Flask(__name__)
@@ -22,16 +22,20 @@ BYBIT_API_KEY = os.getenv("BYBIT_API_KEY")
 BYBIT_API_SECRET = os.getenv("BYBIT_API_SECRET")
 BYBIT_TESTNET = os.getenv("BYBIT_TESTNET", "false").lower() == "true"
 
+PAIR = os.getenv("PAIR", "BNBUSDT")
+QTY = os.getenv("QTY", "0.1")  # cantidad por trade
+RSI_BUY = float(os.getenv("RSI_BUY", "30"))
+RSI_SELL = float(os.getenv("RSI_SELL", "70"))
+STOP_LOSS = float(os.getenv("STOP_LOSS", "0.02"))   # 2% por defecto
+TAKE_PROFIT = float(os.getenv("TAKE_PROFIT", "0.04"))  # 4% por defecto
+
 session = HTTP(
     testnet=BYBIT_TESTNET,
     api_key=BYBIT_API_KEY,
     api_secret=BYBIT_API_SECRET
 )
 
-PAIR = "BNBUSDT"   # Par que operas
-INTERVAL = 60      # Intervalo en minutos para RSI
-
-# === Función de cálculo RSI (simplificada) ===
+# === Función de cálculo RSI ===
 def calculate_rsi(prices, period=14):
     deltas = [prices[i+1] - prices[i] for i in range(len(prices)-1)]
     gains = [d if d > 0 else 0 for d in deltas]
@@ -47,10 +51,19 @@ def calculate_rsi(prices, period=14):
     rs = avg_gain / avg_loss if avg_loss != 0 else 0
     return 100 - (100 / (1 + rs))
 
+# === Función para revisar posiciones abiertas ===
+def get_open_positions():
+    try:
+        positions = session.get_positions(category="spot", symbol=PAIR)
+        return positions["result"]["list"]
+    except Exception as e:
+        logging.error(f"Error obteniendo posiciones: {e}")
+        return []
+
 # === Endpoint raíz ===
 @app.route("/", methods=["GET"])
 def index():
-    return "OK bot-momentum-v6-real"
+    return "OK bot-momentum-v6-advanced"
 
 # === Endpoint de ejecución ===
 @app.route("/ejecutar", methods=["POST"])
@@ -63,32 +76,36 @@ def ejecutar():
             interval="1",
             limit=100
         )
-        prices = [float(candle["close"]) for candle in kline["result"]["list"]]
+        prices = [float(candle[4]) for candle in kline["result"]["list"]]
         current_price = prices[-1]
         rsi = calculate_rsi(prices)
 
         signal = "no_signal"
         order_result = None
 
-        # Estrategia simple: RSI < 30 compra, RSI > 70 vende
-        if rsi < 30:
-            signal = "buy"
-            order_result = session.place_order(
-                category="spot",
-                symbol=PAIR,
-                side="Buy",
-                orderType="Market",
-                qty="0.1"  # Ajusta cantidad
-            )
-        elif rsi > 70:
-            signal = "sell"
-            order_result = session.place_order(
-                category="spot",
-                symbol=PAIR,
-                side="Sell",
-                orderType="Market",
-                qty="0.1"  # Ajusta cantidad
-            )
+        # Revisar si hay posiciones abiertas
+        open_positions = get_open_positions()
+        has_position = len(open_positions) > 0
+
+        if not has_position:
+            if rsi < RSI_BUY:
+                signal = "buy"
+                order_result = session.place_order(
+                    category="spot",
+                    symbol=PAIR,
+                    side="Buy",
+                    orderType="Market",
+                    qty=QTY
+                )
+            elif rsi > RSI_SELL:
+                signal = "sell"
+                order_result = session.place_order(
+                    category="spot",
+                    symbol=PAIR,
+                    side="Sell",
+                    orderType="Market",
+                    qty=QTY
+                )
 
         # Log diario
         logging.info(
@@ -101,7 +118,8 @@ def ejecutar():
                 "price": current_price,
                 "rsi": rsi,
                 "status": signal,
-                "order": order_result
+                "order": order_result,
+                "open_positions": open_positions
             }
         })
 

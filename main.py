@@ -28,6 +28,11 @@ RSI_SELL = float(os.getenv("RSI_SELL", "70"))
 STOP_LOSS = float(os.getenv("STOP_LOSS", "0.02"))
 TAKE_PROFIT = float(os.getenv("TAKE_PROFIT", "0.04"))
 
+# Validar credenciales
+if not BYBIT_API_KEY or not BYBIT_API_SECRET:
+    raise RuntimeError("Faltan credenciales: define BYBIT_API_KEY y BYBIT_API_SECRET en tu entorno")
+
+# === Sesión Bybit ===
 session = HTTP(
     testnet=BYBIT_TESTNET,
     api_key=BYBIT_API_KEY,
